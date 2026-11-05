@@ -41,6 +41,9 @@ h1,h2,h3{font-family:var(--display);font-weight:800;text-transform:uppercase;mar
 .app{max-width:520px;margin:0 auto}
 header.bar{border-bottom:4px solid var(--orange);position:sticky;top:0;z-index:5;background:var(--slate);color:var(--cream);display:flex;align-items:center;gap:12px;padding:calc(10px + env(safe-area-inset-top)) 16px 10px}
 header.bar .t{flex:1;min-width:0}
+header.bar .rf{flex:none;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:var(--cream);display:grid;place-items:center;padding:0}
+header.bar .rf.spin svg{animation:rfspin .8s linear infinite}
+@keyframes rfspin{to{transform:rotate(360deg)}}
 header.bar .t b{display:block;font-family:var(--display);font-weight:800;text-transform:uppercase;letter-spacing:.8px;font-size:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 header.bar .t span{display:block;font-size:14px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .back{border:0;background:rgba(251,243,228,.14);color:var(--cream);height:44px;min-width:44px;border-radius:3px;font-size:22px;cursor:pointer}
@@ -104,6 +107,7 @@ details summary{cursor:pointer;font-weight:700;min-height:44px;display:flex;alig
 @media (prefers-reduced-motion:no-preference){.tile,.btn{transition:transform .08s}}
 
 
+body.noauth .app,body.noauth .nav{visibility:hidden}
 #splash.hold *{animation-play-state:paused!important}
 body.spl .app,body.spl .nav,body.spl #fab{visibility:hidden}
 #splash{position:fixed;inset:0;z-index:100;contain:strict;background:var(--orange);display:flex;align-items:center;justify-content:center;overflow:hidden;transition:opacity .45s ease;animation:bgswap .4s ease 4.95s forwards,jolt .5s ease-out 1.2s}
@@ -355,6 +359,7 @@ function bar(){
     const back=V.name==='job'||!j||['newjob'].includes(V.name)?(V.name==='job'?'jobs':'home'):'job';
     $('#bar').innerHTML='<button class="back" data-a="back" data-to="'+back+'" aria-label="Back">&#8592;</button><div class="t"><b>'+esc(titles[V.name])+'</b><span>'+esc(sub)+'</span></div>'+logo(40);
   }
+  $('#bar').insertAdjacentHTML('beforeend','<button class="rf" data-a="refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>');
   $('#chips').innerHTML='';
 }
 
@@ -562,7 +567,7 @@ const NAVIC={
   vault:'<svg viewBox="0 0 24 24"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/></svg>',
   settings:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>'
 };
-function render(){
+function render(){document.body.classList.toggle('noauth',!sess);
   bar();
   $('#view').innerHTML=VIEWS[V.name]();
   document.querySelectorAll('#view .tile').forEach(function(t){
@@ -747,10 +752,12 @@ function queueSync(){if(!sess)return;clearTimeout(syncTimer);syncTimer=setTimeou
 function allBids(){const m=[];S.jobs.forEach(function(j){j.photos.concat(j.receipts).forEach(function(p){if(p.bid)m.push(p.bid)})});S.vault.forEach(function(d){if(d.bid)m.push(d.bid)});return m}
 function putBlobAt(id,b){return idb().then(function(db){return new Promise(function(res){const t=db.transaction('b','readwrite');t.objectStore('b').put(b,id);t.oncomplete=function(){res()};t.onerror=function(){res()}})}).catch(function(){})}
 function jsonH(){return {'Content-Type':'application/json'}}
+let syncP=null;
 function syncNow(){
-  if(!sess||syncing||!navigator.onLine){paintSync();return Promise.resolve()}
+  if(syncing&&syncP)return syncP;
+  if(!sess||!navigator.onLine){paintSync();return Promise.resolve()}
   syncing=true;syncErr='';paintSync();let changed=false;const pushed=jget(PK,{});
-  return api('/rest/v1/jobs?select=id,data').then(function(r){if(!r.ok)throw new Error('could not read');return r.json()}).then(function(rows){
+  syncP=api('/rest/v1/jobs?select=id,data').then(function(r){if(!r.ok)throw new Error('could not read');return r.json()}).then(function(rows){
     rows.forEach(function(r){const d=r.data,loc=S.jobs.findIndex(function(j){return j.id===r.id});
       if(loc<0){S.jobs.push(d);pushed[r.id]=d._h;changed=true}
       else if((d.upd||0)>(S.jobs[loc].upd||0)){S.jobs[loc]=d;pushed[r.id]=d._h;changed=true}});
@@ -777,25 +784,30 @@ function syncNow(){
   }).then(function(){
     try{localStorage.setItem(KEY,JSON.stringify(S,strip))}catch(e){}
     jset(LS,Date.now());syncing=false;paintSync();
-    if(changed)return hydrate().then(function(){render()})
-  }).catch(function(e){syncing=false;syncErr=(e&&e.message)||'try again';paintSync()});
+    if(changed)return hydrate().then(function(){const ae=document.activeElement;if(window.__force||!(ae&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName)))render()})
+  }).catch(function(e){syncing=false;syncErr=(e&&e.message)||'try again';paintSync();if(!sess)maybeLogin()});
+  return syncP;
 }
 window.addEventListener('online',function(){syncNow()});
-setInterval(function(){if(sess&&!document.hidden)syncNow()},60000);
+setInterval(function(){if(sess&&!document.hidden)syncNow()},30000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden)syncNow()});
 A.signin=function(){const e=($('#sbe').value||'').trim(),p=$('#sbp').value||'';const m=$('#sbmsg');if(!e||!p){m.textContent='Enter your email and password.';return}
   m.textContent='Signing in...';
   authReq('password',{email:e,password:p}).then(function(x){if(!x.ok){m.textContent='Wrong email or password, or no signal.';return}setSess(x.j,e);toast('Signed in');render();syncNow()}).catch(function(){m.textContent='No signal. Try again when you have a connection.'})};
-A.signout=function(){sess=null;try{localStorage.removeItem(SK)}catch(e){}toast('Signed out. Data stays on this phone');render()};
+A.signout=function(){sess=null;try{localStorage.removeItem(SK)}catch(e){}render();maybeLogin()};
 A.syncnow=function(){toast('Backing up...');syncNow()};
+A.refresh=function(){const b=document.querySelector('header.bar .rf');if(b)b.classList.add('spin');
+  if(!sess){maybeLogin();return}
+  if(!navigator.onLine){toast('No signal. Try again when you have a connection');if(b)b.classList.remove('spin');return}
+  window.__force=true;
+  syncNow().then(function(){window.__force=false;render();toast(syncErr?'Could not refresh: '+syncErr:'Up to date')}).catch(function(){window.__force=false;toast('Could not refresh')})};
 function maybeLogin(){
-  if(sess||jget('ejefe-noprompt',0)||document.getElementById('lock')||document.getElementById('loginbox'))return;
+  if(sess||document.getElementById('lock')||document.getElementById('loginbox'))return;
   const o=document.createElement('div');o.id='loginbox';
   const inp='width:100%;max-width:300px;box-sizing:border-box;font-size:16px;padding:12px;border-radius:12px;border:1px solid #5A5450;background:#1d1a18;color:#F6F1E7';
-  o.style.cssText='position:fixed;inset:0;z-index:250;background:#141211;color:#F6F1E7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;font-family:inherit';
-  o.innerHTML='<div style="width:84px">'+logo(84)+'</div><b style="font-size:20px">Sign in to back up</b><span style="color:#cfc8bd;text-align:center;font-size:14px;max-width:300px">Your jobs, photos and receipts copy to your private backup.</span><input id="lie" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" style="'+inp+'"><input id="lip" type="password" placeholder="Password" autocomplete="current-password" style="'+inp+'"><button id="ligo" class="btn" style="width:100%;max-width:300px">Sign in</button><button id="lisk" style="background:none;border:0;color:#cfc8bd;font-size:14px;padding:8px">Not now</button><small id="limsg" style="color:#F7993A;min-height:18px"></small>';
+  o.style.cssText='position:fixed;inset:0;z-index:250;overflow:auto;background:#141211;color:#F6F1E7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;font-family:inherit';
+  o.innerHTML='<div style="width:84px">'+logo(84)+'</div><b style="font-size:20px">Sign in to El Jefe</b><span style="color:#cfc8bd;text-align:center;font-size:14px;max-width:300px">Use the email and password Damian gave you.</span><input id="lie" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" style="'+inp+'"><input id="lip" type="password" placeholder="Password" autocomplete="current-password" style="'+inp+'"><button id="ligo" class="btn" style="width:100%;max-width:300px">Sign in</button><small id="limsg" style="color:#F7993A;min-height:18px"></small>';
   document.body.appendChild(o);
-  o.querySelector('#lisk').onclick=function(){jset('ejefe-noprompt',1);o.remove()};
   function go(){const e=o.querySelector('#lie').value.trim(),p=o.querySelector('#lip').value;const m=o.querySelector('#limsg');if(!e||!p){m.textContent='Enter your email and password.';return}m.textContent='Signing in...';
     authReq('password',{email:e,password:p}).then(function(x){if(!x.ok){m.textContent='Wrong email or password, or no signal.';return}setSess(x.j,e);o.remove();toast('Signed in');render();syncNow()}).catch(function(){m.textContent='No signal. Try again with a connection.'})}
   o.querySelector('#ligo').onclick=go;o.querySelector('#lip').addEventListener('keydown',function(ev){if(ev.key==='Enter')go()});
