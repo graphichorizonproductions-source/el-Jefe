@@ -108,7 +108,7 @@ details summary{cursor:pointer;font-weight:700;min-height:44px;display:flex;alig
 body.spl .app,body.spl .nav,body.spl #fab{visibility:hidden}
 #splash{position:fixed;inset:0;z-index:100;contain:strict;background:var(--orange);display:flex;align-items:center;justify-content:center;overflow:hidden;transition:opacity .45s ease;animation:bgswap .4s ease 4.95s forwards,jolt .5s ease-out 1.2s}
 #splash.out{opacity:0;pointer-events:none}
-#splash .s1{display:flex;flex-direction:column;align-items:center;gap:6px;animation:slam 2.4s linear both,exit1 .35s ease-in 5s forwards}
+#splash .s1{will-change:transform,opacity;display:flex;flex-direction:column;align-items:center;gap:6px;animation:slam 2.4s linear both,exit1 .35s ease-in 5s forwards}
 #splash .s1 svg{width:min(72vw,300px);height:auto;overflow:visible}
 #splash .head{transform-box:view-box;transform-origin:50px 62px;animation:shake 1.3s ease-in-out 2.3s 2}
 #splash .puff{fill:#F6F1E7;opacity:0;transform-box:fill-box;transform-origin:center;animation:steam 1.3s ease-out 2 both}
@@ -251,9 +251,9 @@ body{background:radial-gradient(700px 380px at 100% 0,rgba(244,122,63,.30),trans
 @keyframes ringout{0%{opacity:1;transform:scale(.55)}100%{opacity:0;transform:scale(2.1)}}
 @keyframes jolt{0%{transform:none}20%{transform:translate(-8px,6px)}40%{transform:translate(7px,-6px)}60%{transform:translate(-4px,3px)}80%{transform:translate(2px,-2px)}100%{transform:none}}
 @keyframes slam{
-0%{transform:scale(2.9) rotate(-9deg);opacity:0;animation-timing-function:cubic-bezier(.5,0,.9,.6)}
+0%{transform:translateY(-70px) scale(1.45);opacity:0;animation-timing-function:cubic-bezier(.5,0,.9,.6)}
 9%{opacity:1}
-50%{transform:scale(1) rotate(.5deg);opacity:1;animation-timing-function:ease-out}
+50%{transform:translateY(0) scale(1);opacity:1;animation-timing-function:ease-out}
 58%{transform:scale(.93) rotate(0)}
 74%{transform:scale(1.03);animation-timing-function:ease-in-out}
 100%{transform:none;opacity:1}}
