@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>El Jefe</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' https://rcobrmcnjhqucumflaqo.supabase.co; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#141211">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -303,10 +303,17 @@ function blankJob(name,addr){
 }
 function S0(){return window.__S||{template:DEFAULT_TEMPLATE}}
 function load(){try{const r=JSON.parse(localStorage.getItem(KEY));if(r&&r.jobs)return r}catch(e){}return null}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S,function(k,v){return k==='url'?undefined:v}))}catch(e){}}
+function hsh(t){let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return String(h)}
+function strip(k,v){return k==='url'?undefined:v}
+function jhash(j){return hsh(JSON.stringify(j,function(k,v){return(k==='url'||k==='upd'||k==='_h')?undefined:v}))}
+function stamp(){S.jobs.forEach(function(j){const h=jhash(j);if(j._h!==h){j._h=h;j.upd=Date.now()}});
+  const sh=hsh(JSON.stringify({t:S.template,v:S.vault,p:S.picked}));if(S._sh!==sh){S._sh=sh;S.supd=Date.now()}}
+function save(){try{stamp()}catch(e){}try{localStorage.setItem(KEY,JSON.stringify(S,strip))}catch(e){}try{queueSync()}catch(e){}}
 
 let S=load(); window.__S=S||{template:DEFAULT_TEMPLATE};
 if(!S){S=seed();window.__S=S}
+const SBU='https://rcobrmcnjhqucumflaqo.supabase.co',SBK='sb_publishable_-qyQ5m9jkJq8Q6fs313duA_xNJmCd7U',SK='ejefe-sb',UPK='ejefe-up',PK='ejefe-pushed',LS='ejefe-last';
+let sess=jget(SK,null),syncing=false,syncErr='',syncTimer=null,missTried={};
 let V={name:'home',id:null};
 let quickPhotos=[];
 let q='';
@@ -382,7 +389,7 @@ function vHome(){
   const toSend=jobs.filter(j=>!j.exported&&(j.rooms.length||j.photos.length||j.notes.length||j.scope)).slice(0,3);
   const issues=docIssues();
   const row=function(id,title,sub,act){return '<button class="item link" data-a="'+act+'" data-id="'+id+'"><div class="g"><b>'+esc(title)+'</b><span>'+esc(sub)+'</span></div><span aria-hidden="true">&#8594;</span></button>'};
-  return '<div class="hero-head"><h1>'+greet()+'<br><span class="grad">let\'s work.</span></h1><span class="muted">'+new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})+'</span></div>'
+  return '<div class="hero-head"><h1>'+greet()+'<br><span class="grad">let\'s work.</span></h1><span class="muted">'+new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})+'</span><small class="muted" id="syncpill" style="display:block;margin-top:6px">'+syncLabel()+'</small></div>'
   +(live?'<button class="live" data-a="openclock" data-id="'+live.id+'"><span class="dot"></span><span class="g"><small>Clocked in</small><b>'+esc(live.customer)+'</b></span><span class="lt" id="dashtimer">'+dur(now-live.clock.running)+'</span></button>':'')
   +'<div class="kpi today"><div><span>Hours today</span><b>'+sTime(todayMs)+'</b></div><div><span>Spent today</span><b>$'+Math.round(spent)+'</b></div><div><span>Photos today</span><b>'+pics+'</b></div></div>'
   +'<div class="grid">'
@@ -458,6 +465,7 @@ function vSettings(){
   +'<label class="f">Heading out<textarea id="msgL">'+esc(m.leaving)+'</textarea></label>'
   +'<p class="muted" style="margin:0">{name} becomes the customer first name.</p></div>'
   +'<div class="card"><h3>Saving and backup</h3><p style="margin:0">Jobs save on this device and keep working with no signal.</p><p class="muted" style="margin:0">In the real app, everything also backs up to your Supabase account when there is a connection, and the export sends a second copy to Damian.</p></div>'
+  +backupCard()
   +lockCard()
   +'<div class="card"><h3>Start over</h3><button class="btn ghost full" data-a="reset">'+(resetArmed?'Tap again to erase everything':'Erase everything and start over')+'</button></div>';
 }
@@ -716,8 +724,86 @@ showLock();
 /* ---- Offline support ---- */
 if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost')){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){})})}
 
+/* ---- Backup to Supabase ---- */
+function jget(k,d){try{const v=JSON.parse(localStorage.getItem(k));return v==null?d:v}catch(e){return d}}
+function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+function syncLabel(){
+  if(!sess)return 'Not backed up. Sign in under Settings.';
+  if(syncing)return 'Backing up...';
+  if(syncErr)return 'Backup waiting: '+syncErr;
+  const t=jget(LS,0);return t?'Backed up '+new Date(t).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'Backup ready';
+}
+function paintSync(){const el=document.getElementById('syncpill');if(el)el.textContent=syncLabel();const b=document.getElementById('syncstat');if(b)b.textContent=syncLabel()}
+function backupCard(){
+  if(sess)return '<div class="card"><h3>Backup</h3><p style="margin:0" id="syncstat">'+esc(syncLabel())+'</p><p class="muted" style="margin:0">Signed in as '+esc(sess.email||'')+'. Jobs, photos and receipts copy to your private backup whenever there is signal.</p><button class="btn full" data-a="syncnow">Back up now</button><button class="btn ghost full" data-a="signout">Sign out</button></div>';
+  return '<div class="card"><h3>Backup</h3><p style="margin:0">Sign in so everything backs up and both phones stay in sync.</p><label class="f">Email<input type="email" id="sbe" autocomplete="username" autocapitalize="none"></label><label class="f">Password<input type="password" id="sbp" autocomplete="current-password"></label><p class="muted" id="sbmsg" style="margin:0"></p><button class="btn full" data-a="signin">Sign in</button></div>';
+}
+function authReq(grant,body){return fetch(SBU+'/auth/v1/token?grant_type='+grant,{method:'POST',headers:{'apikey':SBK,'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j}})})}
+function setSess(j,email){sess={access:j.access_token,refresh:j.refresh_token,exp:Date.now()+(j.expires_in||3600)*1000,email:email||(j.user&&j.user.email)||(sess&&sess.email)||''};jset(SK,sess)}
+function fresh(){if(!sess)return Promise.reject(new Error('signed out'));if(sess.exp-Date.now()>60000)return Promise.resolve(sess.access);
+  return authReq('refresh_token',{refresh_token:sess.refresh}).then(function(x){if(!x.ok){if(x.j&&/invalid|expired|not found/i.test(JSON.stringify(x.j))){sess=null;try{localStorage.removeItem(SK)}catch(e){}}throw new Error('sign in again')}setSess(x.j);return sess.access})}
+function api(path,opt){opt=opt||{};return fresh().then(function(tok){const h=Object.assign({'apikey':SBK,'Authorization':'Bearer '+tok},opt.headers||{});return fetch(SBU+path,{method:opt.method||'GET',headers:h,body:opt.body})})}
+function queueSync(){if(!sess)return;clearTimeout(syncTimer);syncTimer=setTimeout(syncNow,2500)}
+function allBids(){const m=[];S.jobs.forEach(function(j){j.photos.concat(j.receipts).forEach(function(p){if(p.bid)m.push(p.bid)})});S.vault.forEach(function(d){if(d.bid)m.push(d.bid)});return m}
+function putBlobAt(id,b){return idb().then(function(db){return new Promise(function(res){const t=db.transaction('b','readwrite');t.objectStore('b').put(b,id);t.oncomplete=function(){res()};t.onerror=function(){res()}})}).catch(function(){})}
+function jsonH(){return {'Content-Type':'application/json'}}
+function syncNow(){
+  if(!sess||syncing||!navigator.onLine){paintSync();return Promise.resolve()}
+  syncing=true;syncErr='';paintSync();let changed=false;const pushed=jget(PK,{});
+  return api('/rest/v1/jobs?select=id,data').then(function(r){if(!r.ok)throw new Error('could not read');return r.json()}).then(function(rows){
+    rows.forEach(function(r){const d=r.data,loc=S.jobs.findIndex(function(j){return j.id===r.id});
+      if(loc<0){S.jobs.push(d);pushed[r.id]=d._h;changed=true}
+      else if((d.upd||0)>(S.jobs[loc].upd||0)){S.jobs[loc]=d;pushed[r.id]=d._h;changed=true}});
+    return api('/rest/v1/app_state?select=id,data&id=eq.main')}).then(function(r){return r.ok?r.json():[]}).then(function(rows){
+    const d=rows[0]&&rows[0].data;
+    if(d&&(d.supd||0)>(S.supd||0)){S.template=d.template;S.vault=d.vault.map(function(v){const l=S.vault.find(function(x){return x.id===v.id});return l&&l.file===v.file&&l.bid?Object.assign({},v,{bid:l.bid}):v});S.picked=d.picked;S.supd=d.supd;S._sh=hsh(JSON.stringify({t:S.template,v:S.vault,p:S.picked}));jset('ejefe-sd',S._sh);changed=true}
+    stamp();
+    const dirty=S.jobs.filter(function(j){return pushed[j.id]!==j._h});
+    if(!dirty.length)return null;
+    const body=dirty.map(function(j){return {id:j.id,data:JSON.parse(JSON.stringify(j,strip)),updated_at:new Date().toISOString()}});
+    return api('/rest/v1/jobs?on_conflict=id',{method:'POST',headers:Object.assign({'Prefer':'resolution=merge-duplicates,return=minimal'},jsonH()),body:JSON.stringify(body)}).then(function(r){if(!r.ok)throw new Error('save failed');dirty.forEach(function(j){pushed[j.id]=j._h})})
+  }).then(function(){jset(PK,pushed);
+    if(jget('ejefe-sd',null)===S._sh)return null;
+    return api('/rest/v1/app_state?on_conflict=id',{method:'POST',headers:Object.assign({'Prefer':'resolution=merge-duplicates,return=minimal'},jsonH()),body:JSON.stringify([{id:'main',data:{template:S.template,vault:S.vault.map(function(v){return {id:v.id,name:v.name,file:v.file,bid:v.bid}}),picked:S.picked,supd:S.supd},updated_at:new Date().toISOString()}])}).then(function(r){if(!r.ok)throw new Error('save failed');jset('ejefe-sd',S._sh)})
+  }).then(function(){
+    const upS=new Set(jget(UPK,[]));const bids=Array.from(new Set(allBids()));
+    return bids.reduce(function(p,id){return p.then(function(){
+      if(upS.has(id))return;
+      return getBlob(id).then(function(b){
+        if(b){return api('/storage/v1/object/job-files/'+id,{method:'POST',headers:{'x-upsert':'true','Content-Type':b.type||'application/octet-stream'},body:b}).then(function(r){if(r.ok){upS.add(id);jset(UPK,Array.from(upS))}})}
+        if(missTried[id])return;missTried[id]=1;
+        return api('/storage/v1/object/authenticated/job-files/'+id).then(function(r){if(!r.ok)return;return r.blob().then(function(bl){return putBlobAt(id,bl).then(function(){upS.add(id);jset(UPK,Array.from(upS));changed=true})})})
+      })})},Promise.resolve())
+  }).then(function(){
+    try{localStorage.setItem(KEY,JSON.stringify(S,strip))}catch(e){}
+    jset(LS,Date.now());syncing=false;paintSync();
+    if(changed)return hydrate().then(function(){render()})
+  }).catch(function(e){syncing=false;syncErr=(e&&e.message)||'try again';paintSync()});
+}
+window.addEventListener('online',function(){syncNow()});
+setInterval(function(){if(sess&&!document.hidden)syncNow()},60000);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)syncNow()});
+A.signin=function(){const e=($('#sbe').value||'').trim(),p=$('#sbp').value||'';const m=$('#sbmsg');if(!e||!p){m.textContent='Enter your email and password.';return}
+  m.textContent='Signing in...';
+  authReq('password',{email:e,password:p}).then(function(x){if(!x.ok){m.textContent='Wrong email or password, or no signal.';return}setSess(x.j,e);toast('Signed in');render();syncNow()}).catch(function(){m.textContent='No signal. Try again when you have a connection.'})};
+A.signout=function(){sess=null;try{localStorage.removeItem(SK)}catch(e){}toast('Signed out. Data stays on this phone');render()};
+A.syncnow=function(){toast('Backing up...');syncNow()};
+function maybeLogin(){
+  if(sess||jget('ejefe-noprompt',0)||document.getElementById('lock')||document.getElementById('loginbox'))return;
+  const o=document.createElement('div');o.id='loginbox';
+  const inp='width:100%;max-width:300px;box-sizing:border-box;font-size:16px;padding:12px;border-radius:12px;border:1px solid #5A5450;background:#1d1a18;color:#F6F1E7';
+  o.style.cssText='position:fixed;inset:0;z-index:250;background:#141211;color:#F6F1E7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;font-family:inherit';
+  o.innerHTML='<div style="width:84px">'+logo(84)+'</div><b style="font-size:20px">Sign in to back up</b><span style="color:#cfc8bd;text-align:center;font-size:14px;max-width:300px">Your jobs, photos and receipts copy to your private backup.</span><input id="lie" type="email" placeholder="Email" autocomplete="username" autocapitalize="none" style="'+inp+'"><input id="lip" type="password" placeholder="Password" autocomplete="current-password" style="'+inp+'"><button id="ligo" class="btn" style="width:100%;max-width:300px">Sign in</button><button id="lisk" style="background:none;border:0;color:#cfc8bd;font-size:14px;padding:8px">Not now</button><small id="limsg" style="color:#F7993A;min-height:18px"></small>';
+  document.body.appendChild(o);
+  o.querySelector('#lisk').onclick=function(){jset('ejefe-noprompt',1);o.remove()};
+  function go(){const e=o.querySelector('#lie').value.trim(),p=o.querySelector('#lip').value;const m=o.querySelector('#limsg');if(!e||!p){m.textContent='Enter your email and password.';return}m.textContent='Signing in...';
+    authReq('password',{email:e,password:p}).then(function(x){if(!x.ok){m.textContent='Wrong email or password, or no signal.';return}setSess(x.j,e);o.remove();toast('Signed in');render();syncNow()}).catch(function(){m.textContent='No signal. Try again with a connection.'})}
+  o.querySelector('#ligo').onclick=go;o.querySelector('#lip').addEventListener('keydown',function(ev){if(ev.key==='Enter')go()});
+}
+if(sess)setTimeout(syncNow,1500);
+
 function splash(){
-  try{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches)return}catch(e){}
+  try{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){setTimeout(maybeLogin,300);return}}catch(e){}
   const puffs=[];
   [[43.5,-1],[56.5,1]].forEach(function(n,k){
     for(let i=0;i<4;i++){
@@ -761,7 +847,7 @@ function splash(){
   el.classList.add('hold');document.body.classList.add('spl');document.body.appendChild(el);
   try{el.getAnimations({subtree:true}).forEach(function(a){a.playbackRate=1.32})}catch(e){}
   let gone=false;
-  function close(){if(gone)return;gone=true;document.body.classList.remove('spl');el.classList.add('out');setTimeout(function(){el.remove()},450)}
+  function close(){if(gone)return;gone=true;document.body.classList.remove('spl');setTimeout(maybeLogin,600);el.classList.add('out');setTimeout(function(){el.remove()},450)}
   el.addEventListener('click',close);
   var im=el.querySelector('.s2 img');
   Promise.all([im&&im.decode?im.decode().catch(function(){}):0,new Promise(function(r){setTimeout(r,250)})]).then(function(){requestAnimationFrame(function(){requestAnimationFrame(function(){el.classList.remove('hold');setTimeout(close,6600)})})});
